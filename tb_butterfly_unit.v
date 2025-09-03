@@ -1,175 +1,99 @@
-`timescale 1ns / 1ps
-
-module tb_butterfly_unit;
-
-    // ²ÎÊı
-    parameter DATA_WIDTH = 12;
-    parameter MODULUS = 3329;
-    parameter CLK_PERIOD = 10;
+module butterfly_unit #(
+    parameter DATA_WIDTH = 12,
+    parameter MODULUS = 3329
+)(
+    input wire clk,
+    input wire rst_n,
+    input wire enable,
+    input wire valid_in,
+    input wire [DATA_WIDTH-1:0] a_in,
+    input wire [DATA_WIDTH-1:0] b_in,
+    input wire [DATA_WIDTH-1:0] twiddle,
+    output reg [DATA_WIDTH-1:0] a_out,
+    output reg [DATA_WIDTH-1:0] b_out,
+    output reg valid_out
+);
+    // å£°æ˜å¾ªç¯å˜é‡åœ¨æ¨¡å—çº§åˆ«
+    integer i, j;
     
-    // ²âÊÔĞÅºÅ
-    reg clk;
-    reg rst_n;
-    reg enable;
-    reg valid_in;
-    reg [DATA_WIDTH-1:0] a_in;
-    reg [DATA_WIDTH-1:0] b_in;
-    reg [DATA_WIDTH-1:0] twiddle;
-    wire [DATA_WIDTH-1:0] a_out;
-    wire [DATA_WIDTH-1:0] b_out;
-    wire valid_out;
+    // å†…éƒ¨ä¿¡å·
+    wire [DATA_WIDTH-1:0] mult_result;
+    wire mult_valid;
+    wire [DATA_WIDTH-1:0] add_result;
+    wire add_valid;
+    wire [DATA_WIDTH-1:0] sub_result;
+    wire sub_valid;
     
-    // ÊµÀı»¯±»²âÄ£¿é
-    butterfly_unit #(
-        .DATA_WIDTH(DATA_WIDTH),
-        .MODULUS(MODULUS)
-    ) dut (
+    // æµæ°´çº¿åŒæ­¥ä¿¡å·
+    reg [DATA_WIDTH-1:0] a_delay[0:6];  // å»¶è¿Ÿaä»¥åŒ¹é…ä¹˜æ³•å™¨å»¶è¿Ÿ
+    reg valid_delay[0:6];
+    
+    // å®ä¾‹åŒ–æ¨¡ä¹˜æ³•å™¨ï¼šè®¡ç®— b * twiddle
+    mod_multiplier_pipeline mult_inst (
         .clk(clk),
         .rst_n(rst_n),
         .enable(enable),
         .valid_in(valid_in),
-        .a_in(a_in),
-        .b_in(b_in),
-        .twiddle(twiddle),
-        .a_out(a_out),
-        .b_out(b_out),
-        .valid_out(valid_out)
+        .a(b_in),
+        .b(twiddle),
+        .result(mult_result),
+        .valid_out(mult_valid)
     );
     
-    // Ê±ÖÓÉú³É
-    always #(CLK_PERIOD/2) clk = ~clk;
+    // å®ä¾‹åŒ–æ¨¡åŠ æ³•å™¨ï¼šè®¡ç®— a + (b * twiddle)
+    mod_adder_pipeline add_inst (
+        .clk(clk),
+        .rst_n(rst_n),
+        .enable(enable),
+        .valid_in(mult_valid),
+        .a(a_delay[4]),  // å»¶è¿ŸåŒ¹é…ä¹˜æ³•å™¨çš„5çº§æµæ°´çº¿
+        .b(mult_result),
+        .result(add_result),
+        .valid_out(add_valid)
+    );
     
-    // ²Î¿¼Ä£ĞÍ
-    function [DATA_WIDTH-1:0] ref_mod_add;
-        input [DATA_WIDTH-1:0] x, y;
-        reg [DATA_WIDTH:0] temp;
-        begin
-            temp = x + y;
-            if (temp >= MODULUS) ref_mod_add = temp - MODULUS;
-            else ref_mod_add = temp;
-        end
-    endfunction
+    // å®ä¾‹åŒ–æ¨¡å‡æ³•å™¨ï¼šè®¡ç®— a - (b * twiddle)
+    mod_subtractor_pipeline sub_inst (
+        .clk(clk),
+        .rst_n(rst_n),
+        .enable(enable),
+        .valid_in(mult_valid),
+        .a(a_delay[4]),  // å»¶è¿ŸåŒ¹é…ä¹˜æ³•å™¨çš„5çº§æµæ°´çº¿
+        .b(mult_result),
+        .result(sub_result),
+        .valid_out(sub_valid)
+    );
     
-    function [DATA_WIDTH-1:0] ref_mod_sub;
-        input [DATA_WIDTH-1:0] x, y;
-        reg signed [DATA_WIDTH:0] temp;
-        begin
-            temp = $signed({1'b0, x}) - $signed({1'b0, y});
-            if (temp < 0) ref_mod_sub = temp + MODULUS;
-            else ref_mod_sub = temp;
-        end
-    endfunction
-    
-    function [DATA_WIDTH-1:0] ref_mod_mul;
-        input [DATA_WIDTH-1:0] x, y;
-        reg [23:0] temp;
-        begin
-            temp = x * y;
-            ref_mod_mul = temp % MODULUS;
-        end
-    endfunction
-    
-    // µûĞÎÔËËã²Î¿¼Ä£ĞÍ
-    task ref_butterfly;
-        input [DATA_WIDTH-1:0] a, b, w;
-        output [DATA_WIDTH-1:0] a_ref, b_ref;
-        reg [DATA_WIDTH-1:0] bw;
-        begin
-            bw = ref_mod_mul(b, w);
-            a_ref = ref_mod_add(a, bw);
-            b_ref = ref_mod_sub(a, bw);
-        end
-    endtask
-    
-    // ²âÊÔÈÎÎñ
-    task test_butterfly;
-        input [DATA_WIDTH-1:0] test_a, test_b, test_w;
-        reg [DATA_WIDTH-1:0] expected_a, expected_b;
-        begin
-            // ¼ÆËãÆÚÍû½á¹û
-            ref_butterfly(test_a, test_b, test_w, expected_a, expected_b);
-            
-            // ÉèÖÃÊäÈë
-            a_in = test_a;
-            b_in = test_b;
-            twiddle = test_w;
-            valid_in = 1;
-            @(posedge clk);
-            valid_in = 0;
-            
-            // µÈ´ı½á¹û£¨µûĞÎÔËËãĞèÒªÔ¼8-10¸öÖÜÆÚ£©
-            repeat(15) begin
-                @(posedge clk);
-                if (valid_out) begin
-                    if ((a_out == expected_a) && (b_out == expected_b))
-                        $display("PASS: (%d,%d)*%d = (%d,%d)", test_a, test_b, test_w, a_out, b_out);
-                    else
-                        $display("FAIL: (%d,%d)*%d = (%d,%d), ÆÚÍû (%d,%d)", 
-                                test_a, test_b, test_w, a_out, b_out, expected_a, expected_b);
-                    return;
-                end
+    // å»¶è¿Ÿé“¾ï¼šå°†a_inå»¶è¿Ÿä»¥åŒ¹é…ä¹˜æ³•å™¨å»¶è¿Ÿ
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            for (i = 0; i < 7; i = i + 1) begin
+                a_delay[i] <= 0;
+                valid_delay[i] <= 0;
             end
-            $display("TIMEOUT: Ã»ÓĞÊÕµ½Êä³ö");
+        end else if (enable) begin
+            a_delay[0] <= a_in;
+            valid_delay[0] <= valid_in;
+            
+            for (j = 1; j < 7; j = j + 1) begin
+                a_delay[j] <= a_delay[j-1];
+                valid_delay[j] <= valid_delay[j-1];
+            end
         end
-    endtask
-    
-    // Ö÷²âÊÔĞòÁĞ
-    initial begin
-        // ³õÊ¼»¯
-        clk = 0;
-        rst_n = 0;
-        enable = 0;
-        valid_in = 0;
-        a_in = 0;
-        b_in = 0;
-        twiddle = 0;
-        
-        $display("========================================");
-        $display("µûĞÎÔËËãµ¥Ôª²âÊÔ");
-        $display("±ê×¼NTTµûĞÎÔËËã: (a,b,¦Ø) -> (a+b*¦Ø, a-b*¦Ø)");
-        $display("========================================");
-        
-        // ¸´Î»
-        #(CLK_PERIOD * 3);
-        rst_n = 1;
-        enable = 1;
-        #(CLK_PERIOD * 2);
-        
-        // ²âÊÔ1: »ù´¡µûĞÎÔËËã
-        $display("\n--- »ù´¡µûĞÎÔËËã²âÊÔ ---");
-        test_butterfly(100, 200, 1);    // twiddle=1µÄ¼òµ¥Çé¿ö
-        test_butterfly(500, 300, 1);    // ÁíÒ»¸ötwiddle=1µÄÇé¿ö
-        test_butterfly(0, 100, 5);      // °üº¬0µÄÇé¿ö
-        
-        // ²âÊÔ2: ¸´ÔÓĞı×ªÒò×Ó
-        $display("\n--- ¸´ÔÓĞı×ªÒò×Ó²âÊÔ ---");
-        test_butterfly(1000, 500, 17);   // NTTÖĞ³£¼ûµÄĞı×ªÒò×Ó
-        test_butterfly(200, 300, 49);    // ÁíÒ»¸öĞı×ªÒò×Ó
-        test_butterfly(1500, 1000, 7);   // ¸ü¸´ÔÓµÄÇé¿ö
-        
-        // ²âÊÔ3: ±ß½çÌõ¼ş
-        $display("\n--- ±ß½çÌõ¼ş²âÊÔ ---");
-        test_butterfly(3328, 3328, 3328); // ×î´óÖµ²âÊÔ
-        test_butterfly(1664, 1664, 2);    // ÖĞµÈÖµ²âÊÔ
-        test_butterfly(1, 3328, 1);       // »ìºÏ²âÊÔ
-        
-        $display("\n========================================");
-        $display("µûĞÎÔËËãµ¥Ôª²âÊÔÍê³É");
-        $display("¹Ø¼üÌØĞÔ:");
-        $display("- ×éºÏ3¸öÄ£ÔËËãµ¥Ôª");
-        $display("- ×Ô¶¯´¦ÀíÁ÷Ë®ÏßÑÓ³ÙÆ¥Åä");
-        $display("- ±ê×¼NTTµûĞÎÔËËã");
-        $display("- ×ÜÑÓ³ÙÔ¼8-10¸öÊ±ÖÓÖÜÆÚ");
-        $display("========================================");
-        
-        #(CLK_PERIOD * 10);
-        $finish;
     end
     
-    // ²¨ĞÎÎÄ¼ş
-    initial begin
-        $dumpfile("butterfly_unit.vcd");
-        $dumpvars(0, tb_butterfly_unit);
+    // è¾“å‡ºå¯„å­˜å™¨ï¼šåŒæ­¥è¾“å‡ºç»“æœ
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            a_out <= 0;
+            b_out <= 0;
+            valid_out <= 0;
+        end else if (enable && add_valid && sub_valid) begin
+            a_out <= add_result;  // a' = a + b*Ï‰
+            b_out <= sub_result;  // b' = a - b*Ï‰
+            valid_out <= 1;
+        end else begin
+            valid_out <= 0;
+        end
     end
-
 endmodule
