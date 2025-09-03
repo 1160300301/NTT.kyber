@@ -1,99 +1,181 @@
-module butterfly_unit #(
-    parameter DATA_WIDTH = 12,
-    parameter MODULUS = 3329
-)(
-    input wire clk,
-    input wire rst_n,
-    input wire enable,
-    input wire valid_in,
-    input wire [DATA_WIDTH-1:0] a_in,
-    input wire [DATA_WIDTH-1:0] b_in,
-    input wire [DATA_WIDTH-1:0] twiddle,
-    output reg [DATA_WIDTH-1:0] a_out,
-    output reg [DATA_WIDTH-1:0] b_out,
-    output reg valid_out
-);
-    // 声明循环变量在模块级别
-    integer i, j;
+`timescale 1ns / 1ps
+
+module tb_butterfly_unit;
+
+    // 参数
+    parameter DATA_WIDTH = 12;
+    parameter MODULUS = 3329;
+    parameter CLK_PERIOD = 10;
     
-    // 内部信号
-    wire [DATA_WIDTH-1:0] mult_result;
-    wire mult_valid;
-    wire [DATA_WIDTH-1:0] add_result;
-    wire add_valid;
-    wire [DATA_WIDTH-1:0] sub_result;
-    wire sub_valid;
+    // 测试信号
+    reg clk;
+    reg rst_n;
+    reg enable;
+    reg valid_in;
+    reg [DATA_WIDTH-1:0] a_in;
+    reg [DATA_WIDTH-1:0] b_in;
+    reg [DATA_WIDTH-1:0] twiddle;
+    wire [DATA_WIDTH-1:0] a_out;
+    wire [DATA_WIDTH-1:0] b_out;
+    wire valid_out;
     
-    // 流水线同步信号
-    reg [DATA_WIDTH-1:0] a_delay[0:6];  // 延迟a以匹配乘法器延迟
-    reg valid_delay[0:6];
-    
-    // 实例化模乘法器：计算 b * twiddle
-    mod_multiplier_pipeline mult_inst (
+    // 实例化被测模块
+    butterfly_unit #(
+        .DATA_WIDTH(DATA_WIDTH),
+        .MODULUS(MODULUS)
+    ) dut (
         .clk(clk),
         .rst_n(rst_n),
         .enable(enable),
         .valid_in(valid_in),
-        .a(b_in),
-        .b(twiddle),
-        .result(mult_result),
-        .valid_out(mult_valid)
+        .a_in(a_in),
+        .b_in(b_in),
+        .twiddle(twiddle),
+        .a_out(a_out),
+        .b_out(b_out),
+        .valid_out(valid_out)
     );
     
-    // 实例化模加法器：计算 a + (b * twiddle)
-    mod_adder_pipeline add_inst (
-        .clk(clk),
-        .rst_n(rst_n),
-        .enable(enable),
-        .valid_in(mult_valid),
-        .a(a_delay[4]),  // 延迟匹配乘法器的5级流水线
-        .b(mult_result),
-        .result(add_result),
-        .valid_out(add_valid)
-    );
+    // 时钟生成
+    always #(CLK_PERIOD/2) clk = ~clk;
     
-    // 实例化模减法器：计算 a - (b * twiddle)
-    mod_subtractor_pipeline sub_inst (
-        .clk(clk),
-        .rst_n(rst_n),
-        .enable(enable),
-        .valid_in(mult_valid),
-        .a(a_delay[4]),  // 延迟匹配乘法器的5级流水线
-        .b(mult_result),
-        .result(sub_result),
-        .valid_out(sub_valid)
-    );
+    // 参考模型
+    function [DATA_WIDTH-1:0] ref_mod_add;
+        input [DATA_WIDTH-1:0] x, y;
+        reg [DATA_WIDTH:0] temp;
+        begin
+            temp = x + y;
+            if (temp >= MODULUS) ref_mod_add = temp - MODULUS;
+            else ref_mod_add = temp;
+        end
+    endfunction
     
-    // 延迟链：将a_in延迟以匹配乘法器延迟
-    always @(posedge clk or negedge rst_n) begin
-        if (!rst_n) begin
-            for (i = 0; i < 7; i = i + 1) begin
-                a_delay[i] <= 0;
-                valid_delay[i] <= 0;
-            end
-        end else if (enable) begin
-            a_delay[0] <= a_in;
-            valid_delay[0] <= valid_in;
+    function [DATA_WIDTH-1:0] ref_mod_sub;
+        input [DATA_WIDTH-1:0] x, y;
+        reg signed [DATA_WIDTH:0] temp;
+        begin
+            temp = $signed({1'b0, x}) - $signed({1'b0, y});
+            if (temp < 0) ref_mod_sub = temp + MODULUS;
+            else ref_mod_sub = temp;
+        end
+    endfunction
+    
+    function [DATA_WIDTH-1:0] ref_mod_mul;
+        input [DATA_WIDTH-1:0] x, y;
+        reg [23:0] temp;
+        begin
+            temp = x * y;
+            ref_mod_mul = temp % MODULUS;
+        end
+    endfunction
+    
+    // 蝶形运算参考模型
+    task ref_butterfly;
+        input [DATA_WIDTH-1:0] a, b, w;
+        output [DATA_WIDTH-1:0] a_ref, b_ref;
+        reg [DATA_WIDTH-1:0] bw;
+        begin
+            bw = ref_mod_mul(b, w);
+            a_ref = ref_mod_add(a, bw);
+            b_ref = ref_mod_sub(a, bw);
+        end
+    endtask
+    
+    // 测试任务
+    task test_butterfly;
+        input [DATA_WIDTH-1:0] test_a, test_b, test_w;
+        reg [DATA_WIDTH-1:0] expected_a, expected_b;
+        integer wait_cycles;
+        begin
+            // 计算期望结果
+            ref_butterfly(test_a, test_b, test_w, expected_a, expected_b);
             
-            for (j = 1; j < 7; j = j + 1) begin
-                a_delay[j] <= a_delay[j-1];
-                valid_delay[j] <= valid_delay[j-1];
+            // 设置输入
+            a_in = test_a;
+            b_in = test_b;
+            twiddle = test_w;
+            valid_in = 1;
+            @(posedge clk);
+            valid_in = 0;
+            
+            // 等待结果（蝶形运算需要约8-10个周期）
+            wait_cycles = 0;
+            while (wait_cycles < 15) begin
+                @(posedge clk);
+                wait_cycles = wait_cycles + 1;
+                if (valid_out) begin
+                    if ((a_out == expected_a) && (b_out == expected_b))
+                        $display("PASS: (%d,%d)*%d = (%d,%d)", test_a, test_b, test_w, a_out, b_out);
+                    else
+                        $display("FAIL: (%d,%d)*%d = (%d,%d), 期望 (%d,%d)", 
+                                test_a, test_b, test_w, a_out, b_out, expected_a, expected_b);
+                    wait_cycles = 99; // 跳出循环
+                end
+            end
+            
+            if (wait_cycles != 99) begin
+                $display("TIMEOUT: 没有收到输出");
             end
         end
+    endtask
+    
+    // 主测试序列
+    initial begin
+        // 初始化
+        clk = 0;
+        rst_n = 0;
+        enable = 0;
+        valid_in = 0;
+        a_in = 0;
+        b_in = 0;
+        twiddle = 0;
+        
+        $display("========================================");
+        $display("蝶形运算单元测试");
+        $display("标准NTT蝶形运算: (a,b,ω) -> (a+b*ω, a-b*ω)");
+        $display("========================================");
+        
+        // 复位
+        #(CLK_PERIOD * 3);
+        rst_n = 1;
+        enable = 1;
+        #(CLK_PERIOD * 2);
+        
+        // 测试1: 基础蝶形运算
+        $display("\n--- 基础蝶形运算测试 ---");
+        test_butterfly(100, 200, 1);    // twiddle=1的简单情况
+        test_butterfly(500, 300, 1);    // 另一个twiddle=1的情况
+        test_butterfly(0, 100, 5);      // 包含0的情况
+        
+        // 测试2: 复杂旋转因子
+        $display("\n--- 复杂旋转因子测试 ---");
+        test_butterfly(1000, 500, 17);   // NTT中常见的旋转因子
+        test_butterfly(200, 300, 49);    // 另一个旋转因子
+        test_butterfly(1500, 1000, 7);   // 更复杂的情况
+        
+        // 测试3: 边界条件
+        $display("\n--- 边界条件测试 ---");
+        test_butterfly(3328, 3328, 3328); // 最大值测试
+        test_butterfly(1664, 1664, 2);    // 中等值测试
+        test_butterfly(1, 3328, 1);       // 混合测试
+        
+        $display("\n========================================");
+        $display("蝶形运算单元测试完成");
+        $display("关键特性:");
+        $display("- 组合3个模运算单元");
+        $display("- 自动处理流水线延迟匹配");
+        $display("- 标准NTT蝶形运算");
+        $display("- 总延迟约8-10个时钟周期");
+        $display("========================================");
+        
+        #(CLK_PERIOD * 10);
+        $finish;
     end
     
-    // 输出寄存器：同步输出结果
-    always @(posedge clk or negedge rst_n) begin
-        if (!rst_n) begin
-            a_out <= 0;
-            b_out <= 0;
-            valid_out <= 0;
-        end else if (enable && add_valid && sub_valid) begin
-            a_out <= add_result;  // a' = a + b*ω
-            b_out <= sub_result;  // b' = a - b*ω
-            valid_out <= 1;
-        end else begin
-            valid_out <= 0;
-        end
+    // 波形文件
+    initial begin
+        $dumpfile("butterfly_unit.vcd");
+        $dumpvars(0, tb_butterfly_unit);
     end
+
 endmodule
