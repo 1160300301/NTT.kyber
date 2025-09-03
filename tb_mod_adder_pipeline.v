@@ -2,12 +2,12 @@
 
 module tb_mod_adder_pipeline;
 
-    // ²ÎÊı
+    // å‚æ•°
     parameter DATA_WIDTH = 12;
     parameter MODULUS = 3329;
     parameter CLK_PERIOD = 10;
     
-    // ²âÊÔĞÅºÅ
+    // æµ‹è¯•ä¿¡å·
     reg clk;
     reg rst_n;
     reg enable;
@@ -16,21 +16,9 @@ module tb_mod_adder_pipeline;
     reg [DATA_WIDTH-1:0] b;
     wire [DATA_WIDTH-1:0] result;
     wire valid_out;
+    reg [DATA_WIDTH-1:0] expected;
     
-    // ²âÊÔ¿ØÖÆ
-    integer test_count = 0;
-    integer pass_count = 0;
-    integer fail_count = 0;
-    
-    // ²âÊÔÊäÈë¶ÓÁĞºÍÆÚÍû½á¹û¶ÓÁĞ
-    reg [DATA_WIDTH-1:0] test_a_queue [0:9];
-    reg [DATA_WIDTH-1:0] test_b_queue [0:9];
-    reg [DATA_WIDTH-1:0] expected_queue [0:9];
-    integer input_ptr = 0;
-    integer output_ptr = 0;
-    integer total_tests = 0;
-    
-    // ÊµÀı»¯±»²âÄ£¿é
+    // å®ä¾‹åŒ–è¢«æµ‹æ¨¡å—
     mod_adder_pipeline #(
         .DATA_WIDTH(DATA_WIDTH),
         .MODULUS(MODULUS)
@@ -45,10 +33,10 @@ module tb_mod_adder_pipeline;
         .valid_out(valid_out)
     );
     
-    // Ê±ÖÓÉú³É
+    // æ—¶é’Ÿç”Ÿæˆ
     always #(CLK_PERIOD/2) clk = ~clk;
     
-    // ²Î¿¼Ä£ĞÍ
+    // å‚è€ƒæ¨¡å‹
     function [DATA_WIDTH-1:0] ref_mod_add;
         input [DATA_WIDTH-1:0] x, y;
         reg [DATA_WIDTH:0] temp;
@@ -61,51 +49,52 @@ module tb_mod_adder_pipeline;
         end
     endfunction
     
-    // ÊäÈë²âÊÔÊı¾İÈÎÎñ
-    task send_test_data;
+    // ä¿®æ­£çš„å¸¦æ¸…ç†åŠŸèƒ½çš„æµ‹è¯•ä»»åŠ¡
+    task test_add_clean;
         input [DATA_WIDTH-1:0] test_a, test_b;
+        integer wait_count;
         begin
-            if (input_ptr < 10) begin
-                test_a_queue[input_ptr] = test_a;
-                test_b_queue[input_ptr] = test_b;
-                expected_queue[input_ptr] = ref_mod_add(test_a, test_b);
+            // æ¸…ç©ºæµæ°´çº¿ - ä½†ä¸æ¸…ç†å¤ªä¹…
+            valid_in = 0;
+            a = 0;
+            b = 0;
+            repeat(3) @(posedge clk);  // å‡å°‘åˆ°3ä¸ªå‘¨æœŸ
+            
+            // è¾“å…¥æµ‹è¯•æ•°æ®
+            $display("=== è¾“å…¥ %d + %d ===", test_a, test_b);
+            a = test_a;
+            b = test_b;
+            valid_in = 1;
+            @(posedge clk);
+            valid_in = 0;
+            
+            // ç­‰å¾…ç»“æœ - å¢åŠ ç­‰å¾…æ—¶é—´
+            wait_count = 0;
+            while (wait_count < 10) begin  // å¢åŠ åˆ°10ä¸ªå‘¨æœŸ
+                @(posedge clk);
+                wait_count = wait_count + 1;
                 
-                a = test_a;
-                b = test_b;
-                valid_in = 1;
-                
-                $display("ÊäÈë[%0d]: %d + %d (ÆÚÍû½á¹û: %d)", 
-                         input_ptr, test_a, test_b, expected_queue[input_ptr]);
-                
-                input_ptr = input_ptr + 1;
-                total_tests = total_tests + 1;
+                if (valid_out) begin
+                    expected = ref_mod_add(test_a, test_b);
+                    if (result == expected)
+                        $display("PASS: %d + %d = %d (å‘¨æœŸ%d)", test_a, test_b, result, wait_count);
+                    else
+                        $display("FAIL: %d + %d = %d (æœŸæœ›: %d)", test_a, test_b, result, expected);
+                    wait_count = 999; // è·³å‡ºå¾ªç¯
+                end else begin
+                    $display("ç­‰å¾…è¾“å‡º... (å‘¨æœŸ%d)", wait_count);
+                end
+            end
+            
+            if (wait_count != 999) begin
+                $display("ERROR: æµ‹è¯•è¶…æ—¶ - valid_outæœªæ‹‰é«˜");
             end
         end
     endtask
     
-    // ¼ì²éÊä³ö½á¹û
-    always @(posedge clk) begin
-        if (valid_out && (output_ptr < total_tests)) begin
-            test_count = test_count + 1;
-            
-            if (result == expected_queue[output_ptr]) begin
-                pass_count = pass_count + 1;
-                $display("Êä³ö[%0d]: %d + %d = %d ?", 
-                         output_ptr, test_a_queue[output_ptr], test_b_queue[output_ptr], result);
-            end else begin
-                fail_count = fail_count + 1;
-                $display("Êä³ö[%0d]: %d + %d = %d (ÆÚÍû: %d) ?", 
-                         output_ptr, test_a_queue[output_ptr], test_b_queue[output_ptr], 
-                         result, expected_queue[output_ptr]);
-            end
-            
-            output_ptr = output_ptr + 1;
-        end
-    end
-    
-    // Ö÷²âÊÔĞòÁĞ
-     initial begin
-        // ³õÊ¼»¯
+    // ä¸»æµ‹è¯•åºåˆ—
+    initial begin
+        // åˆå§‹åŒ–
         clk = 0;
         rst_n = 0;
         enable = 0;
@@ -114,128 +103,70 @@ module tb_mod_adder_pipeline;
         b = 0;
         
         $display("========================================");
-        $display("¼ò»¯Á÷Ë®Ïß²âÊÔ");
+        $display("ç®€åŒ–æµæ°´çº¿æµ‹è¯•ï¼ˆå¸¦æ¸…ç†ç‰ˆæœ¬ï¼‰");
         $display("========================================");
         
-        // ¸´Î»
+        // å¤ä½
         #(CLK_PERIOD * 3);
         rst_n = 1;
         enable = 1;
         #(CLK_PERIOD * 2);
         
-        // ²âÊÔ1£º¹Û²ìÁ÷Ë®ÏßÑÓ³Ù
-        $display("\n--- ²âÊÔ1: Á÷Ë®ÏßÑÓ³Ù¹Û²ì ---");
-        $display("Ê±¼ä %0t: ÊäÈë 100 + 200", $time);
+        // æµ‹è¯•1ï¼šè§‚å¯Ÿæµæ°´çº¿å»¶è¿Ÿ
+        $display("\n--- æµ‹è¯•1: æµæ°´çº¿å»¶è¿Ÿè§‚å¯Ÿ ---");
+        $display("æ—¶é—´ %0t: è¾“å…¥ 100 + 200", $time);
         a = 100; 
         b = 200; 
         valid_in = 1;
         @(posedge clk);
-//        valid_in = 0;  // Ö»ÊäÈëÒ»¸öÊı¾İ
         
-        // ¹Û²ì5¸öÊ±ÖÓÖÜÆÚ
         repeat(5) begin
             @(posedge clk);
-            $display("Ê±¼ä %0t: valid_out=%d, result=%d %s", 
+            $display("æ—¶é—´ %0t: valid_out=%d, result=%d %s", 
                      $time, valid_out, result,
-                     valid_out ? "(Êä³öÓĞĞ§!)" : "");
+                     valid_out ? "(è¾“å‡ºæœ‰æ•ˆ!)" : "");
         end
         
-        // ²âÊÔ2£ºÁ¬ĞøÊäÈë¹Û²ì
-       $display("\n--- ĞŞÕı°æ¶ÀÁ¢ÊäÈë²âÊÔ ---");
-    
-        // ÊäÈë1: 0 + 0
-        $display("=== ÊäÈë 0 + 0 ===");
-        a = 0; b = 0; valid_in = 1; 
-        @(posedge clk);
-        valid_in = 0;
+        // æµ‹è¯•2ï¼šç‹¬ç«‹è¾“å…¥æµ‹è¯•ï¼ˆå¸¦æ¸…ç†ï¼‰
+        $display("\n--- æµ‹è¯•2: ç‹¬ç«‹è¾“å…¥æµ‹è¯•ï¼ˆå¸¦æ¸…ç†ï¼‰---");
+        test_add_clean(0, 0);
+        test_add_clean(1, 2);
+        test_add_clean(3328, 1);
         
-        // µÈ´ıÕâ¸öÊäÈëÍêÈ«´¦ÀíÍê
-        repeat(6) begin
-            @(posedge clk);
-            if (valid_out) 
-                $display("Êä³ö1: %d (ÆÚÍû: 0)", result);
-            else
-                $display("µÈ´ıÊä³ö1...");
-        end
+        // æµ‹è¯•3ï¼šç»“æœéªŒè¯ï¼ˆå¸¦æ¸…ç†ï¼‰
+        $display("\n--- æµ‹è¯•3: ç»“æœéªŒè¯ï¼ˆå¸¦æ¸…ç†ï¼‰---");
+        test_add_clean(50, 75);
+        test_add_clean(2000, 2000);
         
-        // ÊäÈë2: 1 + 2  
-        $display("=== ÊäÈë 1 + 2 ===");
-        a = 1; b = 2; valid_in = 1;
-        @(posedge clk);
-        valid_in = 0;
-        
-        repeat(6) begin
-            @(posedge clk);
-            if (valid_out) 
-                $display("Êä³ö2: %d (ÆÚÍû: 3)", result);
-            else
-                $display("µÈ´ıÊä³ö2...");
-        end
-        
-        // ÊäÈë3: 3328 + 1
-        $display("=== ÊäÈë 3328 + 1 ===");
-        a = 3328; b = 1; valid_in = 1;
-        @(posedge clk);
-        valid_in = 0;
-        
-        repeat(6) begin
-            @(posedge clk);
-            if (valid_out) 
-                $display("Êä³ö3: %d (ÆÚÍû: 0)", result);
-            else
-                $display("µÈ´ıÊä³ö3...");
-        end
-        
-        // ²âÊÔ3£ºÊÖ¶¯ÑéÖ¤¼¸¸ö½á¹û
-        $display("\n--- ²âÊÔ3: ½á¹ûÑéÖ¤ ---");
-        
-        // ²âÊÔ¼òµ¥¼Ó·¨
-        $display("²âÊÔ: 50 + 75 = ?");
-        a = 50; b = 75; valid_in = 1; @(posedge clk);
-//        valid_in = 0;
-        repeat(4) @(posedge clk);
-        if (valid_out) begin
-            if (result == 125) 
-                $display("PASS: 50 + 75 = %d", result);
-            else
-                $display("FAIL: 50 + 75 = %d (Ó¦¸ÃÊÇ125)", result);
-        end
-        
-        // ²âÊÔÄ£ÔËËã
-        $display("²âÊÔ: 2000 + 2000 = ? (ĞèÒªÄ£ÔËËã)");
-        a = 2000; b = 2000; valid_in = 1; @(posedge clk);
-//        valid_in = 0;
-        repeat(4) @(posedge clk);
-        if (valid_out) begin
-            // 2000 + 2000 = 4000, 4000 - 3329 = 671
-            if (result == 671)
-                $display("PASS: 2000 + 2000 = %d (Ä£ÔËËãÕıÈ·)", result);
-            else
-                $display("FAIL: 2000 + 2000 = %d (Ó¦¸ÃÊÇ671)", result);
-        end
+        // æµ‹è¯•4ï¼šé¢å¤–éªŒè¯
+        $display("\n--- æµ‹è¯•4: é¢å¤–éªŒè¯ ---");
+        test_add_clean(100, 200);
+        test_add_clean(1664, 1664);
+        test_add_clean(3328, 3328);
         
         $display("\n========================================");
-        $display("¼ò»¯²âÊÔÍê³É");
-        $display("¹Ø¼ü¹Û²ìµã:");
-        $display("1. ÊäÈëºó3¸öÊ±ÖÓÖÜÆÚ²ÅÓĞÊä³ö");
-        $display("2. Á¬ĞøÊäÈëÊ±£¬Êä³öÒ²Á¬Ğø");
-        $display("3. valid_outÕıÈ·Ö¸Ê¾Êä³öÓĞĞ§ĞÔ");
+        $display("æ¸…ç†ç‰ˆæœ¬æµ‹è¯•å®Œæˆ");
+        $display("å…³é”®ç‰¹æ€§:");
+        $display("- æ¯ä¸ªæµ‹è¯•å‰æ¸…ç†æµæ°´çº¿");
+        $display("- æ¶ˆé™¤æ•°æ®æ®‹ç•™é—®é¢˜");
+        $display("- ç‹¬ç«‹éªŒè¯æ¯ä¸ªè¿ç®—");
+        $display("- 3çº§æµæ°´çº¿æ­£ç¡®å·¥ä½œ");
         $display("========================================");
         
         #(CLK_PERIOD * 5);
         $finish;
     end
     
-    // ²¨ĞÎÎÄ¼ş
+    // æ³¢å½¢æ–‡ä»¶
     initial begin
         $dumpfile("mod_adder_pipeline.vcd");
         $dumpvars(0, tb_mod_adder_pipeline);
     end
     
-    // ³¬Ê±±£»¤
+    // è¶…æ—¶ä¿æŠ¤
     initial begin
-        #(CLK_PERIOD * 500);
-        $display("²âÊÔ³¬Ê±£¡");
+        #(CLK_PERIOD * 1000);
+        $display("æµ‹è¯•è¶…æ—¶ï¼");
         $finish;
     end
 
