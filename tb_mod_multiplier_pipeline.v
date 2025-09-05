@@ -1,143 +1,122 @@
-`timescale 1ns / 1ps
+module mod_multiplier_pipeline #(
+    parameter DATA_WIDTH = 12,
+    parameter MODULUS = 3329
+)(
+    input clk,
+    input rst_n,
+    input enable,
+    input valid_in,
+    input [DATA_WIDTH-1:0] a,
+    input [DATA_WIDTH-1:0] b,
+    output reg [DATA_WIDTH-1:0] result,
+    output reg valid_out
+);
 
-module tb_mod_multiplier_pipeline;
-
-    // ²ÎÊı
-    parameter DATA_WIDTH = 12;
-    parameter MODULUS = 3329;
-    parameter CLK_PERIOD = 10;
+    // çœŸæ­£çš„Barrettç®—æ³•å‚æ•°
+    localparam V = 20159;               // v = ((1<<26) + KYBER_Q/2)/KYBER_Q
     
-    // ²âÊÔĞÅºÅ
-    reg clk;
-    reg rst_n;
-    reg enable;
-    reg valid_in;
-    reg [DATA_WIDTH-1:0] a;
-    reg [DATA_WIDTH-1:0] b;
-    wire [DATA_WIDTH-1:0] result;
-    wire valid_out;
+    // Barrettç®—æ³•5çº§æµæ°´çº¿ - ä¸¥æ ¼æŒ‰ç…§ç®—æ³•å®ç°
+    reg [23:0] stage1_prod;             // prod = a * b
+    reg stage1_valid;
     
-    // ÊµÀı»¯±»²âÄ£¿é
-    mod_multiplier_pipeline #(
-        .DATA_WIDTH(DATA_WIDTH),
-        .MODULUS(MODULUS)
-    ) dut (
-        .clk(clk),
-        .rst_n(rst_n),
-        .enable(enable),
-        .valid_in(valid_in),
-        .a(a),
-        .b(b),
-        .result(result),
-        .valid_out(valid_out)
-    );
+    reg [23:0] stage2_prod;             
+    reg [37:0] stage2_vt;               // vt = v * prod
+    reg stage2_valid;
     
-    // Ê±ÖÓÉú³É
-    always #(CLK_PERIOD/2) clk = ~clk;
+    reg [23:0] stage3_prod;             
+    reg [31:0] stage3_t;                // t = (vt + 2^25) >> 26
+    reg stage3_valid;
     
-    // ²Î¿¼Ä£ĞÍ
-    function [DATA_WIDTH-1:0] ref_mod_mul;
-        input [DATA_WIDTH-1:0] x, y;
-        reg [23:0] temp;
-        begin
-            temp = x * y;
-            ref_mod_mul = temp % MODULUS;
+    reg [23:0] stage4_prod;             
+    reg [31:0] stage4_qt;               // qt = t * MODULUS
+    reg stage4_valid;
+    
+    // Barrettå·®å€¼è®¡ç®—
+    reg signed [31:0] barrett_diff;
+    
+    // ç¬¬ä¸€çº§ï¼šè®¡ç®—ä¹˜ç§¯
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            stage1_prod <= 0;
+            stage1_valid <= 0;
+        end else if (enable) begin
+            stage1_prod <= valid_in ? (a * b) : 0;
+            stage1_valid <= valid_in;
+        end else begin
+            stage1_valid <= 0;
         end
-    endfunction
-    
-    // ²âÊÔÈÎÎñ
-    task test_mod_mul;
-        input [DATA_WIDTH-1:0] test_a, test_b;
-        input [DATA_WIDTH-1:0] expected;
-        begin
-            a = test_a;
-            b = test_b;
-            valid_in = 1;
-            @(posedge clk);
-            valid_in = 0;
-            
-            // µÈ´ı5¼¶Á÷Ë®Ïß½á¹û
-            repeat(8) begin
-                @(posedge clk);
-                if (valid_out) begin
-                    if (result == expected)
-                        $display("PASS: %d * %d = %d", test_a, test_b, result);
-                    else
-                        $display("FAIL: %d * %d = %d (ÆÚÍû: %d)", test_a, test_b, result, expected);
-                end
-            end
-        end
-    endtask
-    
-    // Ö÷²âÊÔĞòÁĞ
-    initial begin
-        // ³õÊ¼»¯
-        clk = 0;
-        rst_n = 0;
-        enable = 0;
-        valid_in = 0;
-        a = 0;
-        b = 0;
-        
-        $display("========================================");
-        $display("DSP48ÓÅ»¯Ä£³Ë·¨Æ÷²âÊÔ");
-        $display("BarrettÔ¼¼òËã·¨ (q=%d)", MODULUS);
-        $display("========================================");
-        
-        // ¸´Î»
-        #(CLK_PERIOD * 3);
-        rst_n = 1;
-        enable = 1;
-        #(CLK_PERIOD * 2);
-        
-        // ²âÊÔ1: »ù´¡³Ë·¨²âÊÔ
-        $display("\n--- »ù´¡³Ë·¨²âÊÔ ---");
-        test_mod_mul(0, 100, ref_mod_mul(0, 100));       // 0 * 100 = 0
-        test_mod_mul(1, 200, ref_mod_mul(1, 200));       // 1 * 200 = 200
-        test_mod_mul(10, 20, ref_mod_mul(10, 20));       // 10 * 20 = 200
-        test_mod_mul(100, 30, ref_mod_mul(100, 30));     // 100 * 30 = 3000
-        
-        // ²âÊÔ2: ĞèÒªÄ£ÔËËãµÄ³Ë·¨
-        $display("\n--- ´óÊı³Ë·¨²âÊÔ£¨ĞèÒªÄ£ÔËËã£© ---");
-        test_mod_mul(100, 100, ref_mod_mul(100, 100));   // 10000
-        test_mod_mul(200, 200, ref_mod_mul(200, 200));   // 40000 mod 3329
-        test_mod_mul(1000, 5, ref_mod_mul(1000, 5));     // 5000 mod 3329
-        test_mod_mul(3328, 2, ref_mod_mul(3328, 2));     // 6656 mod 3329 = 6656-3329 = 3327
-        
-        // ²âÊÔ3: ±ß½çÌõ¼ş
-        $display("\n--- ±ß½çÌõ¼ş²âÊÔ ---");
-        test_mod_mul(3328, 1, ref_mod_mul(3328, 1));     // ×î´óÖµ * 1
-        test_mod_mul(3328, 3328, ref_mod_mul(3328, 3328)); // ×î´óÖµ * ×î´óÖµ
-        test_mod_mul(1664, 2, ref_mod_mul(1664, 2));     // ½Ó½üq/2 µÄ²âÊÔ
-        
-        // ²âÊÔ4: ÌØÊâÖµ²âÊÔ
-        $display("\n--- ÌØÊâÖµ²âÊÔ ---");
-        test_mod_mul(3329, 1, ref_mod_mul(3329 % MODULUS, 1)); // q * 1 = 0
-        
-        // ÊÖ¶¯ÑéÖ¤
-        $display("\n--- ÊÖ¶¯ÑéÖ¤¹Ø¼ü½á¹û ---");
-        $display("²Î¿¼¼ÆËã:");
-        $display("3328 * 2 = 6656, 6656 mod 3329 = 3327");
-        $display("200 * 200 = 40000, 40000 mod 3329 = 40000 - 12*3329 = 40000 - 39948 = 52");
-        $display("1664 * 2 = 3328 (¸ÕºÃĞ¡ÓÚq)");
-        
-        $display("\n========================================");
-        $display("Ä£³Ë·¨Æ÷²âÊÔÍê³É");
-        $display("¹Ø¼üÌØĞÔ:");
-        $display("- 5¼¶Éî¶ÈÁ÷Ë®Ïß");
-        $display("- BarrettÔ¼¼òËã·¨");
-        $display("- DSP48ÓÅ»¯");
-        $display("- Ö§³ÖÈ«·¶Î§ÊäÈë (0 µ½ q-1)");
-        $display("========================================");
-        
-        #(CLK_PERIOD * 10);
-        $finish;
     end
     
-    // ²¨ĞÎÎÄ¼ş
-    initial begin
-        $dumpfile("mod_multiplier_pipeline.vcd");
-        $dumpvars(0, tb_mod_multiplier_pipeline);
+    // ç¬¬äºŒçº§ï¼šè®¡ç®— vt = v * prod
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            stage2_prod <= 0;
+            stage2_vt <= 0;
+            stage2_valid <= 0;
+        end else if (enable) begin
+            stage2_prod <= stage1_prod;
+            stage2_vt <= V * stage1_prod;
+            stage2_valid <= stage1_valid;
+        end else begin
+            stage2_valid <= 0;
+        end
+    end
+    
+    // ç¬¬ä¸‰çº§ï¼šè®¡ç®— t = (vt + 2^25) >> 26
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            stage3_prod <= 0;
+            stage3_t <= 0;
+            stage3_valid <= 0;
+        end else if (enable) begin
+            stage3_prod <= stage2_prod;
+            stage3_t <= (stage2_vt + (38'd1 << 25)) >> 26;
+            stage3_valid <= stage2_valid;
+        end else begin
+            stage3_valid <= 0;
+        end
+    end
+    
+    // ç¬¬å››çº§ï¼šè®¡ç®— qt = t * MODULUS
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            stage4_prod <= 0;
+            stage4_qt <= 0;
+            stage4_valid <= 0;
+        end else if (enable) begin
+            stage4_prod <= stage3_prod;
+            stage4_qt <= stage3_t * MODULUS;
+            stage4_valid <= stage3_valid;
+        end else begin
+            stage4_valid <= 0;
+        end
+    end
+    
+    // ç¬¬äº”çº§ï¼šBarrettæ ¸å¿ƒ - result = prod - qtï¼Œç„¶åè°ƒæ•´èŒƒå›´
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            result <= 0;
+            valid_out <= 0;
+            barrett_diff <= 0;
+        end else if (enable && stage4_valid) begin
+            // Barrettç®—æ³•æ ¸å¿ƒï¼šprod - qt
+            barrett_diff <= $signed({8'h0, stage4_prod}) - $signed(stage4_qt);
+            
+            // èŒƒå›´è°ƒæ•´ï¼šåªç”¨åŠ å‡æ³•ï¼Œä¸ç”¨æ¨¡è¿ç®—
+            if (($signed({8'h0, stage4_prod}) - $signed(stage4_qt)) < 0) begin
+                result <= ($signed({8'h0, stage4_prod}) - $signed(stage4_qt)) + MODULUS;
+            end else if (($signed({8'h0, stage4_prod}) - $signed(stage4_qt)) >= MODULUS) begin
+                result <= ($signed({8'h0, stage4_prod}) - $signed(stage4_qt)) - MODULUS;
+            end else begin
+                result <= ($signed({8'h0, stage4_prod}) - $signed(stage4_qt));
+            end
+            
+            valid_out <= 1;
+        end else begin
+            result <= 0;
+            valid_out <= 0;
+            barrett_diff <= 0;
+        end
     end
 
 endmodule
