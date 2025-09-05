@@ -13,8 +13,10 @@ module butterfly_unit #(
     output reg [DATA_WIDTH-1:0] b_out,
     output reg valid_out
 );
-
-    // ÄÚ²¿ĞÅºÅ
+    // å£°æ˜å¾ªç¯å˜é‡åœ¨æ¨¡å—çº§åˆ«
+    integer i, j;
+    
+    // å†…éƒ¨ä¿¡å·
     wire [DATA_WIDTH-1:0] mult_result;
     wire mult_valid;
     wire [DATA_WIDTH-1:0] add_result;
@@ -22,11 +24,11 @@ module butterfly_unit #(
     wire [DATA_WIDTH-1:0] sub_result;
     wire sub_valid;
     
-    // Á÷Ë®ÏßÍ¬²½ĞÅºÅ
-    reg [DATA_WIDTH-1:0] a_delay[0:6];  // ÑÓ³ÙaÒÔÆ¥Åä³Ë·¨Æ÷ÑÓ³Ù
-    reg valid_delay[0:6];
+    // ä¿®æ­£ï¼š5çº§æµæ°´çº¿å»¶è¿Ÿé“¾ (0åˆ°4ï¼Œå…±5çº§)
+    reg [DATA_WIDTH-1:0] a_delay[0:4];  
+    reg valid_delay[0:4];
     
-    // ÊµÀı»¯Ä£³Ë·¨Æ÷£º¼ÆËã b * twiddle
+    // å®ä¾‹åŒ–æ¨¡ä¹˜æ³•å™¨ï¼šè®¡ç®— b * twiddle
     mod_multiplier_pipeline mult_inst (
         .clk(clk),
         .rst_n(rst_n),
@@ -38,35 +40,34 @@ module butterfly_unit #(
         .valid_out(mult_valid)
     );
     
-    // ÊµÀı»¯Ä£¼Ó·¨Æ÷£º¼ÆËã a + (b * twiddle)
+    // å®ä¾‹åŒ–æ¨¡åŠ æ³•å™¨ï¼šè®¡ç®— a + (b * twiddle)
     mod_adder_pipeline add_inst (
         .clk(clk),
         .rst_n(rst_n),
         .enable(enable),
         .valid_in(mult_valid),
-        .a(a_delay[4]),  // ÑÓ³ÙÆ¥Åä³Ë·¨Æ÷µÄ5¼¶Á÷Ë®Ïß
+        .a(a_delay[4]),  // ä½¿ç”¨ç¬¬5çº§å»¶è¿Ÿï¼ˆç´¢å¼•4ï¼‰
         .b(mult_result),
         .result(add_result),
         .valid_out(add_valid)
     );
     
-    // ÊµÀı»¯Ä£¼õ·¨Æ÷£º¼ÆËã a - (b * twiddle)
+    // å®ä¾‹åŒ–æ¨¡å‡æ³•å™¨ï¼šè®¡ç®— a - (b * twiddle)
     mod_subtractor_pipeline sub_inst (
         .clk(clk),
         .rst_n(rst_n),
         .enable(enable),
         .valid_in(mult_valid),
-        .a(a_delay[4]),  // ÑÓ³ÙÆ¥Åä³Ë·¨Æ÷µÄ5¼¶Á÷Ë®Ïß
+        .a(a_delay[4]),  // ä½¿ç”¨ç¬¬5çº§å»¶è¿Ÿï¼ˆç´¢å¼•4ï¼‰
         .b(mult_result),
         .result(sub_result),
         .valid_out(sub_valid)
     );
     
-    // ÑÓ³ÙÁ´£º½«a_inÑÓ³ÙÒÔÆ¥Åä³Ë·¨Æ÷ÑÓ³Ù
+    // ä¿®æ­£ï¼š5çº§å»¶è¿Ÿé“¾
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
-            integer i;
-            for (i = 0; i < 7; i = i + 1) begin
+            for (i = 0; i < 5; i = i + 1) begin
                 a_delay[i] <= 0;
                 valid_delay[i] <= 0;
             end
@@ -74,27 +75,25 @@ module butterfly_unit #(
             a_delay[0] <= a_in;
             valid_delay[0] <= valid_in;
             
-            integer j;
-            for (j = 1; j < 7; j = j + 1) begin
+            for (j = 1; j < 5; j = j + 1) begin
                 a_delay[j] <= a_delay[j-1];
                 valid_delay[j] <= valid_delay[j-1];
             end
         end
     end
     
-    // Êä³ö¼Ä´æÆ÷£ºÍ¬²½Êä³ö½á¹û
+    // è¾“å‡ºå¯„å­˜å™¨ï¼šåŒæ­¥è¾“å‡ºç»“æœ
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
             a_out <= 0;
             b_out <= 0;
             valid_out <= 0;
         end else if (enable && add_valid && sub_valid) begin
-            a_out <= add_result;  // a' = a + b*¦Ø
-            b_out <= sub_result;  // b' = a - b*¦Ø
+            a_out <= add_result;  // a' = a + b*Ï‰
+            b_out <= sub_result;  // b' = a - b*Ï‰
             valid_out <= 1;
         end else begin
             valid_out <= 0;
         end
     end
-
 endmodule
